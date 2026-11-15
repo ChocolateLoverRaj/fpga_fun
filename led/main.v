@@ -1,7 +1,7 @@
 module main #(
 ) (
     input btn,
-    output reg led
+    output led
 );
   wire _input;
   wire _output;

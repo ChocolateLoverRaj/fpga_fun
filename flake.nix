@@ -33,6 +33,8 @@
             verible
             rust-analyzer
             rust-bin.stable.latest.default
+
+            swim
           ];
         };
       }
