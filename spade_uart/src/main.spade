@@ -1,55 +1,4 @@
-// entity uart_tx(rst: bool, clk: clock, data: Option<uint<8>>) -> bool {
-//     enum UartState {
-//         Idle,
-//         StartBit,
-//         DataFrame { bit: uint<3> },
-//         StopBit,
-//     }
-//
-//     reg(clk) counter: uint<25> reset(rst: 0) = if counter == 234 {
-//         0
-//     } else {
-//         trunc(counter + 1)
-//     };
-//
-//     reg(clk) state: UartState reset(rst: UartState::Idle) = if counter == 233 {
-//         match state {
-//             UartState::Idle => UartState::StartBit,
-//             UartState::StartBit => UartState::DataFrame { bit: 0 },
-//             UartState::DataFrame { bit } => if bit == 7 {
-//                 UartState::StopBit
-//             } else {
-//                 UartState::DataFrame { bit: trunc(bit + 1) }
-//             },
-//             UartState::StopBit => UartState::Idle,
-//         }
-//     } else {
-//         state
-//     };
-//
-//     match state {
-//         UartState::Idle => {
-//             // High on idle
-//             true
-//         },
-//         UartState::StartBit => {
-//             // Low on start bit
-//             false
-//         },
-//         UartState::DataFrame { bit } => {
-//             match data {
-//                 Some(data) => data.as_bits()[bit],
-//                 None => false,
-//             }
-//         },
-//         UartState::StopBit => {
-//             // High on stop bit
-//             true
-//         }
-//     }
-// }
-
-use protocols::uart::{uart_tx, UartConfig};
+use protocols::uart::{uart_tx, uart_rx, UartConfig, UartOut};
 use ready_valid::Rv;
 
 #[no_mangle(all)]
@@ -58,6 +7,7 @@ entity top(
     rst_i: bool,
     led: inv [bool; 6],
     TXD: inv bool,
+    RXD: bool,
 ) {
     let rst = rst_i;
 
@@ -85,16 +35,15 @@ entity top(
         },
         (_, true, true) => {
             // This branch means that the character was just successfully sent
-            // Advance the character and don't send the next one yet
-            State(
-                char: match state.char {
-                    b'\r' => b'\n',
-                    b'\n' => b'a',
-                    b'z' => b'\r',
-                    _ => trunc(state.char + 1),
-                },
-                valid: false
-            )
+            // Advance the character
+            // If the previously printed character was whitespace, immediately print the next character
+            // otherwise, wait until the next counter == 0 to  send the next character
+            match state.char {
+                b'\r' => State(char: b'\n', valid: true),
+                b'\n' => State(char: b'a', valid: true),
+                b'z' => State(char: b'\r', valid: false),
+                _ => State(char: trunc(state.char + 1), valid: false),
+            }
         },
         _ => {
             // This means that we're either waiting for the byte to be sent
@@ -110,17 +59,22 @@ entity top(
         None
     };
     let rv = Rv(value, ready_inv);
-    set TXD = inst uart_tx(clk, rst, rv, UartConfig(
+
+    let uart_config = UartConfig(
         bit_time: 234,
         parity: false,
         stop_bits: 1,
-    ));
+    );
 
-    // Show which char we are on with the LEDs
-    let char_number: uint<6> = match state.char {
-        b'\r' => 0,
-        b'\n' => 1,
-        char => trunc(2 + (char - b'a')),
+    set TXD = inst uart_tx(clk, rst, rv, uart_config);
+
+    let rx = inst uart_rx(clk, rst, RXD, uart_config);
+
+    // Display the low 6 bits of the last byte received
+    reg(clk) last_byte_received reset(rst: 0) = if let UartOut::Ok(byte) = rx {
+        byte
+    } else {
+        last_byte_received
     };
-    set led = (~char_number).as_bits();
+    set led = (~trunc::<_, uint<6>>(last_byte_received)).as_bits();
 }
