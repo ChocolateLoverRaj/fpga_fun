@@ -1,0 +1,38 @@
+use protocols::uart::{uart_tx, uart_rx, UartConfig, UartOut};
+use ready_valid::Rv;
+
+#[no_mangle(all)]
+entity top(
+    clk: clock,
+    rst_i: bool,
+    led: inv [bool; 6],
+    TXD: inv bool,
+    RXD: bool,
+) {
+    let rst = rst_i;
+
+    let uart_config = UartConfig(
+        bit_time: 234,
+        parity: false,
+        stop_bits: 1,
+    );
+
+    let rx = inst uart_rx(clk, rst, RXD, uart_config);
+
+    let (ready, ready_inv) = port::<bool>();
+    reg(clk) value reset(rst: None) = match (ready, rx) {
+        (true, UartOut::Ok(byte)) => Some(byte),
+        (true, _) => None,
+        _ => value,
+    };
+    let rv = Rv(value, ready_inv);
+    set TXD = inst uart_tx(clk, rst, rv, uart_config);
+
+    // Display the low 6 bits of the last byte received
+    reg(clk) last_byte_received reset(rst: 0) = if let UartOut::Ok(byte) = rx {
+        byte
+    } else {
+        last_byte_received
+    };
+    set led = (~trunc::<_, uint<6>>(last_byte_received)).as_bits();
+}
