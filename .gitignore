@@ -1,3 +1,7 @@
 .direnv
-/build
+# for Rust and Spade
+build
 target
+# for Spade
+.surfer
+

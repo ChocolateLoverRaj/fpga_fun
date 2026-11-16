@@ -1,0 +1,126 @@
+// entity uart_tx(rst: bool, clk: clock, data: Option<uint<8>>) -> bool {
+//     enum UartState {
+//         Idle,
+//         StartBit,
+//         DataFrame { bit: uint<3> },
+//         StopBit,
+//     }
+//
+//     reg(clk) counter: uint<25> reset(rst: 0) = if counter == 234 {
+//         0
+//     } else {
+//         trunc(counter + 1)
+//     };
+//
+//     reg(clk) state: UartState reset(rst: UartState::Idle) = if counter == 233 {
+//         match state {
+//             UartState::Idle => UartState::StartBit,
+//             UartState::StartBit => UartState::DataFrame { bit: 0 },
+//             UartState::DataFrame { bit } => if bit == 7 {
+//                 UartState::StopBit
+//             } else {
+//                 UartState::DataFrame { bit: trunc(bit + 1) }
+//             },
+//             UartState::StopBit => UartState::Idle,
+//         }
+//     } else {
+//         state
+//     };
+//
+//     match state {
+//         UartState::Idle => {
+//             // High on idle
+//             true
+//         },
+//         UartState::StartBit => {
+//             // Low on start bit
+//             false
+//         },
+//         UartState::DataFrame { bit } => {
+//             match data {
+//                 Some(data) => data.as_bits()[bit],
+//                 None => false,
+//             }
+//         },
+//         UartState::StopBit => {
+//             // High on stop bit
+//             true
+//         }
+//     }
+// }
+
+use protocols::uart::{uart_tx, UartConfig};
+use ready_valid::Rv;
+
+#[no_mangle(all)]
+entity top(
+    clk: clock,
+    rst_i: bool,
+    led: inv [bool; 6],
+    TXD: inv bool,
+) {
+    let rst = rst_i;
+
+    // The clock is 27 MHz
+    // Count clocks, resetting to 0 every 0.25s
+    reg(clk) counter: uint<25> reset(rst: 0) = if counter == 6_750_000  {
+        0
+    } else {
+        trunc(counter + 1)
+    };
+
+    // When ready transitions from true->false, it means the UART is processing the byte
+    // When ready transitions from false->true, it means the UART is done processing a byte
+    let (ready, ready_inv) = port::<bool>();
+
+    struct State {
+        char: uint<8>,
+        valid: bool,
+    }
+
+    reg(clk) state: State reset(rst: State(char: b'\r', valid: false)) = match (counter, ready, state.valid) {
+        (0, _, _) => {
+            // On the timer, send the next char
+            State(char: state.char, valid: true)
+        },
+        (_, true, true) => {
+            // This branch means that the character was just successfully sent
+            // Advance the character and don't send the next one yet
+            State(
+                char: match state.char {
+                    b'\r' => b'\n',
+                    b'\n' => b'a',
+                    b'z' => b'\r',
+                    _ => trunc(state.char + 1),
+                },
+                valid: false
+            )
+        },
+        _ => {
+            // This means that we're either waiting for the byte to be sent
+            // or we're waiting for counter == 0
+            // Either way, don't change the state
+            state
+        }
+    };
+
+    let value = if state.valid {
+        Some(state.char)
+    } else {
+        None
+    };
+    let rv = Rv(value, ready_inv);
+    set TXD = inst uart_tx(clk, rst, rv, UartConfig(
+        bit_time: 234,
+        parity: false,
+        stop_bits: 1,
+    ));
+
+    // Show which char we are on with the LEDs
+    let char_number: uint<6> = match state.char {
+        b'\r' => 0,
+        b'\n' => 1,
+        char => trunc(2 + (char - b'a')),
+    };
+    set led = (~char_number).as_bits();
+}

@@ -1,0 +1,22 @@
+#[no_mangle(all)]
+entity top(
+    key_i: bool,
+    clk: clock,
+    rst_i: bool,
+    led: inv [bool; 6],
+) {
+    // The button is active low
+    let input = !key_i;
+    let rst = rst_i;
+
+    let initial_value = true;
+
+    reg(clk) prev_input: bool reset(rst: false) = input;
+    reg(clk) output: bool reset(rst: initial_value) = if input && !prev_input {
+        !output
+    } else {
+        output
+    };
+
+    set led = [output, true, true, true, true, true];
+}

@@ -34,7 +34,21 @@
             rust-analyzer
             rust-bin.stable.latest.default
 
-            swim
+            picocom
+
+            (swim.overrideAttrs (
+              finalAttrs: previousAttrs: {
+                src = pkgs.fetchFromCodeberg {
+                  owner = "ChocolateLoverRaj";
+                  repo = "swim";
+                  rev = "gowin-pack-err";
+                  hash = "sha256-x558dv1Xfd9MtkPbnaaN7NmRi847468o5uPO6PJVQAw=";
+                };
+                cargoHash = "sha256-IxEdK1bnoFXZYnTxmGI71h0WyrZ+Bu7twkUVLO7mIUo=";
+              }
+            ))
+            uv
+            surfer
           ];
         };
       }

@@ -1,0 +1,25 @@
+entity blinky<#uint N>(rst: bool, clk: clock, on_duration: uint<N>, off_duration: uint<N>) -> bool {
+    reg(clk) counter: uint<N> reset(rst: 0) = if counter == trunc(on_duration + off_duration) {
+        0
+    } else {
+        trunc(counter + 1)
+    };
+    counter < on_duration
+}
+
+#[no_mangle(all)]
+entity top(
+    key_i: bool,
+    clk: clock,
+    rst_i: bool,
+    led: inv [bool; 6],
+) {
+    // The button is active low
+    let input = !key_i;
+    let rst = rst_i;
+
+    let output = inst blinky::<25>(rst, clk, 9_000_000, 18_000_000);
+
+    // true -> off
+    set led = [!output, output, true, true, true, true];
+}

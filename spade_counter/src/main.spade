@@ -1,0 +1,25 @@
+#[no_mangle(all)]
+entity top(
+    clk: clock,
+    rst_i: bool,
+    led: inv [bool; 6],
+) {
+    let rst = rst_i;
+
+    // The clock is 27 MHz
+    // Count clocks, resetting to 0 every 0.5 s
+    reg(clk) counter: uint<25> reset(rst: 0) = if counter == 27_000_000 / 2 {
+        0
+    } else {
+        trunc(counter + 1)
+    };
+
+    reg(clk) n: uint<6> reset(rst: 0) = if counter == 0 {
+        trunc(n + 1)
+    } else {
+        n
+    };
+
+    // true -> off
+    set led = (~n).as_bits();
+}
