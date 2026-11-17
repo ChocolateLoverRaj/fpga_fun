@@ -1,92 +1,8 @@
+use debounce::debouncer;
 use protocols::uart::{uart_tx, uart_rx, UartConfig, UartOut};
 use ready_valid::Rv;
+use rotary_encoder::Direction;
 
-struct PendingValue<T, #uint N> {
-    value: T,
-    time_stable: uint<N>
-}
-
-struct DebouncerState<T, #uint N> {
-    value: T,
-    pending_value: Option<PendingValue<T, N>>,
-}
-
-entity debouncer<T: PartialEq, #uint N>(clk: clock, rst: bool, value: T, debounce_time: uint<N>) -> T {
-    reg(clk) state reset (rst: DebouncerState(value: value, pending_value: None)) = match (value == state.value, state.pending_value) {
-        (true, _) => {
-            DebouncerState(value: value, pending_value: None)
-        },
-        (false, Some(pending_value)) => if value == pending_value.value {
-            if pending_value.time_stable == debounce_time -. 1 {
-                DebouncerState(value: value, pending_value: None)
-            } else {
-                DebouncerState(
-                    value: state.value,
-                    pending_value: Some(PendingValue(value: value, time_stable: pending_value.time_stable +. 1))
-                )
-            }
-        } else {
-            DebouncerState(
-                value: state.value,
-                pending_value: Some(PendingValue(value: value, time_stable: 0))
-            )
-        },
-        (false, None) => {
-            DebouncerState(
-                value: state.value,
-                pending_value: Some(PendingValue(value: value, time_stable: 0))
-            )
-        }
-    };
-    state.value
-}
-
-enum Direction {
-    Clockwise,
-    CounterClockwise,
-}
-
-enum RotaryPin {
-    Clk,
-    Dt,
-}
-
-impl PartialEq for RotaryPin {
-    fn eq(self, rhs: Self) -> bool {
-        match (self, rhs) {
-            (Self::Clk, Self::Clk) => true,
-            (Self::Dt, Self::Dt) => true,
-            _ => false,
-        }
-    }
-
-    fn ne(self, rhs: Self) -> bool {
-        !self.eq(rhs)
-    }
-}
-
-impl RotaryPin {
-    fn leading_direction(self) -> Direction {
-        match self {
-            Self::Clk => Direction::Clockwise,
-            Self::Dt => Direction::CounterClockwise,
-        }
-    }
-
-    fn other(self) -> Self {
-        match  self {
-            Self::Clk => Self::Dt,
-            Self::Dt => Self::Clk,
-        }
-    }
-}
-
-struct State {
-    r_clk: bool,
-    r_dt: bool,
-    leading_pin: Option<RotaryPin>,
-    change: Option<Direction>,
-}
 #[no_mangle(all)]
 entity top(
     clk: clock,
@@ -98,42 +14,14 @@ entity top(
 ) {
     let rst = rst_i;
     // Debounce all inputs 1ms
-    let r_clk = inst debouncer(clk, rst, !rotary_encoder_clk, 27_000_u15);
-    let r_dt = inst debouncer(clk, rst, !rotary_encoder_dt, 27_000_u15);
-    let r_sw = inst debouncer(clk, rst, !rotary_encoder_sw, 27_000_u15);
+    let clk_pin = inst debouncer(clk, rst, !rotary_encoder_clk, 27_000_u15);
+    let dt_pin = inst debouncer(clk, rst, !rotary_encoder_dt, 27_000_u15);
+    let sw = inst debouncer(clk, rst, !rotary_encoder_sw, 27_000_u15);
 
-    reg(clk) state: State reset(rst: State(r_clk: r_clk, r_dt: r_dt, leading_pin: None, change: None)) = {
-        let clk_changed = r_clk != state.r_clk;
-        let dt_changed = r_dt != state.r_dt;
-        let changed_pin = match (clk_changed, dt_changed) {
-            (true, false) => Some(RotaryPin::Clk),
-            (false, true) => Some(RotaryPin::Dt),
-            _ => None
-        };
-        let (change, leading_pin) = match (changed_pin, state.leading_pin) {
-            (Some(changed_pin), Some(leading_pin)) => {
-                let change = if changed_pin != leading_pin {
-                    // non-leading pin caught up
-                    leading_pin.leading_direction()
-                } else {
-                    // leading pin moved back
-                    leading_pin.other().leading_direction()
-                };
-                (Some(change), None)
-            },
-            (Some(changed_pin), None) => {
-                (Some(changed_pin.leading_direction()), Some(changed_pin))
-            },
-            (None, leading_pin) => {
-                // Either no pins changed or both pins changed
-                (None, leading_pin)
-            }
-        };
-        State(r_clk: r_clk, r_dt: r_dt, leading_pin: leading_pin, change: change)
-    };
+    let change_direction = inst rotary_encoder::rotary_encoder(clk, rst, clk_pin, dt_pin);
 
     // The rotary encoder has 60 steps to do a full rotation, so display a number from 0..60
-    reg(clk) position: uint<6> reset(rst: 0) = match state.change {
+    reg(clk) position: uint<6> reset(rst: 0) = match change_direction {
         Some(Direction::Clockwise) => {
             if position == 59 {
                 0
@@ -158,7 +46,7 @@ entity top(
     reg(clk) counter reset(rst: 0_u3) = counter +. 1;
     let bright = counter == 0;
 
-    let value = if r_sw {
+    let value = if sw {
         if position == 0 {
             // Without this, we cannot differentiate between switch pressed and not pressed when the position is 0.
             // Activate all LEDs in this case.

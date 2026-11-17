@@ -18,5 +18,7 @@ tool = "openFPGALoader"
 board = "tangnano20k"
 
 [libraries]
+debounce.git = "https://github.com/ChocolateLoverRaj/spade_debounce.git"
 protocols.git = "https://codeberg.org/spade-lang/protocols"
 ready_valid.git = "https://codeberg.org/spade-lang/ready_valid.git"
+rotary_encoder.git = "https://github.com/ChocolateLoverRaj/spade_rotary_encoder.git"
