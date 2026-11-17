@@ -1,7 +1,7 @@
 use debounce::debouncer;
 use protocols::uart::{uart_tx, uart_rx, UartConfig, UartOut};
 use ready_valid::Rv;
-use rotary_encoder::Direction;
+use rotary_encoder::{Direction, rotary_encoder};
 
 #[no_mangle(all)]
 entity top(
@@ -18,7 +18,7 @@ entity top(
     let dt_pin = inst debouncer(clk, rst, !rotary_encoder_dt, 27_000_u15);
     let sw = inst debouncer(clk, rst, !rotary_encoder_sw, 27_000_u15);
 
-    let change_direction = inst rotary_encoder::rotary_encoder(clk, rst, clk_pin, dt_pin);
+    let change_direction = inst rotary_encoder(clk, rst, clk_pin, dt_pin);
 
     // The rotary encoder has 60 steps to do a full rotation, so display a number from 0..60
     reg(clk) position: uint<6> reset(rst: 0) = match change_direction {
