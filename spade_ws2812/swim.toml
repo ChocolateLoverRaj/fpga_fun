@@ -1,4 +1,4 @@
-name = "tangnano20k"
+name = "spade_ws2812_tangnano20k"
 
 [synthesis]
 command = "synth_gowin"
@@ -18,8 +18,4 @@ tool = "openFPGALoader"
 board = "tangnano20k"
 
 [libraries]
-protocols.git = "https://codeberg.org/spade-lang/protocols"
 ready_valid.git = "https://codeberg.org/spade-lang/ready_valid.git"
-
-[simulation]
-testbench_dir = "test"

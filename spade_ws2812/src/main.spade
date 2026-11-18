@@ -1,79 +1,92 @@
-entity state_gen<#uint IndexWidth>(
+mod ws2812;
+
+use ready_valid::Rv;
+use ws2812::{Ws2812Config, Pixel, Request};
+
+enum Step {
+    SetColor,
+    Reset,
+    Wait { cycles_left: uint<22> },
+}
+
+struct State {
+    pos: uint<8>,
+    step: Step,
+}
+
+/// Based on <https://github.com/kalkyl/ws2812-async/blob/5b4db3b84938cf44cbe2573ec982c5f85c76285d/examples/src/bin/rainbow.rs>
+pub fn wheel(wheel_pos: uint<8>) -> Pixel {
+    let pos = 255 -. wheel_pos;
+
+    if pos < 85 {
+        let scaled = trunc(pos * 3_u8);
+        Pixel {
+            r: 255 -. scaled,
+            g: 0,
+            b: scaled,
+        }
+    } else if pos < 170 {
+        let offset = pos -. 85;
+        let scaled = trunc(offset * 3_u8);
+        Pixel {
+            r: 0,
+            g: scaled,
+            b: 255 -. scaled,
+        }
+    } else {
+        let offset = pos -. 170;
+        let scaled = trunc(offset * 3_u8);
+        Pixel {
+            r: scaled,
+            g: 255 -. scaled,
+            b: 0,
+        }
+    }
+}
+
+#[no_mangle(all)]
+entity top(
     clk: clock,
-    rst: bool,
-    num_leds: uint<IndexWidth>,
-    timing: Timing,
-) -> OutputControl<uint<IndexWidth>> {
-    let t_ret = timing.us280;
-    let t_bit = timing.us1_25;
-    reg(clk) state reset(rst: State::Ret(0)) = match state {
-        State::Ret(duration) => {
-            if duration >= trunc(t_ret -1) {
-                State::Led(0, 0, 0)
-            } else {
-                State::Ret(trunc(duration + 1))
-            }
-        },
-        State::Led { idx, bit, duration } => {
-            if duration == trunc(t_bit - 1) {
-                if bit == 23 {
-                    if idx == trunc(num_leds-1) {
-                        State::Ret(0)
-                    }
-                    else {
-                        State::Led { idx: trunc(idx+1), bit: 0, duration: 0 }
-                    }
-                }
-                else {
-                    State::Led { idx, bit: trunc(bit+1), duration: 0 }
-                }
-            }
-            else {
-                State::Led { idx, bit, duration: trunc(duration + 1) }
-            }
-        },
+    rst_i: bool,
+    led: inv [bool; 6],
+    ws2812_pin: inv bool,
+) {
+    let rst = rst_i;
+
+    let (ready, ready_inv) = port();
+
+    let ws2812_config = Ws2812Config::<11> {
+        t_350_ns: 9,
+        t_700_ns: 19,
+        t_800_ns: 22,
+        t_600_ns: 16,
+        t_50_us: 1350,
     };
 
-    match state {
-        State::Ret(_) => OutputControl::Ret(),
-        State::Led { idx, bit, duration } =>
-            OutputControl::Led { payload: idx, bit, duration }
-    }
+    let initial_state = State {
+        pos: 0,
+        step: Step::SetColor,
+    };
+    reg(clk) state initial(State { pos: 0, step: Step::SetColor }) reset(rst: initial_state) = match (state.step, ready) {
+        (Step::SetColor, true) => State { pos: state.pos, step: Step::Reset },
+        (Step::Reset, true) => State { pos: state.pos, step: Step::Wait { cycles_left: 316_243 } },
+        (Step::Wait { cycles_left }, _) => if cycles_left == 0 {
+            State { pos: state.pos +. 1, step: Step::SetColor }
+        } else {
+            State { pos: state.pos, step: Step::Wait { cycles_left: cycles_left -. 1 } }
+        },
+        _ => state,
+    };
+    let request = match state.step {
+        Step::SetColor => Some(Request::SendPixel {
+            pixel: wheel(state.pos)
+        }),
+        Step::Reset => Some(Request::SendReset),
+        _ => None
+    };
 
-}
+    set ws2812_pin = inst ws2812::ws2812(clk, rst, Rv(request, ready_inv), ws2812_config);
 
-struct Timing {
-    // 280 microseconds
-    us280: uint<17>,
-    // 0.4 microseconds
-    us0_4: uint<12>,
-    // 0.8 microseconds
-    us0_8: uint<12>,
-    // 0.45 microseconds
-    us0_45: uint<12>,
-    // 0.85 microseconds
-    us0_85: uint<12>,
-    // 1.25 microseconds
-    us1_25: uint<12>,
-}
-
-enum State<#uint IndexWidth> {
-    Ret { duration: uint<17> },
-    Led { idx: uint<IndexWidth>, bit: uint<5>, duration: uint<12> }
-}
-
-enum OutputControl<T> {
-    /// Currently emitting the RET signal
-    Ret,
-    /// Currently emitting the specified bit of the color for LED `index`
-    Led { payload: T, bit: uint<5>, duration: uint<12> }
-}
-
-entity state_gen_th(
-    clk: clock,
-    rst: bool,
-    num_leds: uint<5>,
-    timing: Timing,
-) -> OutputControl<uint<5>> {
-    inst state_gen(clk:, rst:, num_leds:, timing:)
+    let n: uint<6> = trunc(state.pos);
+    set led = (~n).as_bits();
 }
