@@ -38,13 +38,6 @@ pub enum Request {
     SendReset,
 }
 
-enum BitState<#uint N> {
-    _0High { cycles_left: uint<N> },
-    _0Low { cycles_left: uint<N> },
-    _1High { cycles_left: uint<N> },
-    _1Low { cycles_left: uint<N> },
-}
-
 enum State<#uint N> {
     Idle,
     SendBit { pixel: Pixel, bit: uint<5>, cycles_left: uint<N> },
