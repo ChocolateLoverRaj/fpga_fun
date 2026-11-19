@@ -23,6 +23,14 @@ impl Pixel {
             self.b.as_bits()[trunc(23 -. bit)]
         }
     }
+
+    pub fn right_shift(self, value: uint<8>) -> Self {
+        Self {
+            r: self.r >> value,
+            g: self.g >> value,
+            b: self.b >> value,
+        }
+    }
 }
 
 pub enum Request {

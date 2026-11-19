@@ -4,9 +4,9 @@ use ready_valid::Rv;
 use ws2812::{Ws2812Config, Pixel, Request};
 
 enum Step {
-    SetColor,
+    SetColor { pixels_left: uint<6> },
     Reset,
-    Wait { cycles_left: uint<22> },
+    Wait { cycles_left: uint<21> },
 }
 
 struct State {
@@ -47,12 +47,11 @@ pub fn wheel(wheel_pos: uint<8>) -> Pixel {
 #[no_mangle(all)]
 entity top(
     clk: clock,
-    rst_i: bool,
+    rst: bool,
+    btn: bool,
     led: inv [bool; 6],
     ws2812_pin: inv bool,
 ) {
-    let rst = rst_i;
-
     let (ready, ready_inv) = port();
 
     let ws2812_config = Ws2812Config::<11> {
@@ -63,23 +62,34 @@ entity top(
         t_50_us: 1350,
     };
 
+    // 64 total pixels
+    let initial_pixels_left = 63;
+    let pixel_pos_shift = 1_u8;
+    // Dim the pixel because the LEDs get super bright
+    let right_shift_value = 0;
+    // Approximately 10s per cycle
+    let wait_time = 1_057_420;
     let initial_state = State {
         pos: 0,
-        step: Step::SetColor,
+        step: Step::SetColor { pixels_left: initial_pixels_left },
     };
-    reg(clk) state initial(State { pos: 0, step: Step::SetColor }) reset(rst: initial_state) = match (state.step, ready) {
-        (Step::SetColor, true) => State { pos: state.pos, step: Step::Reset },
-        (Step::Reset, true) => State { pos: state.pos, step: Step::Wait { cycles_left: 316_243 } },
+    reg(clk) state initial(State { pos: 0, step: Step::SetColor { pixels_left: 63 } }) reset(rst: initial_state) = match (state.step, ready) {
+        (Step::SetColor { pixels_left }, true) => if pixels_left == 0 {
+            State { pos: state.pos, step: Step::Reset }
+        } else {
+            State { pos: state.pos, step: Step::SetColor { pixels_left: pixels_left -. 1 } }
+        },
+        (Step::Reset, true) => State { pos: state.pos, step: Step::Wait { cycles_left: wait_time } },
         (Step::Wait { cycles_left }, _) => if cycles_left == 0 {
-            State { pos: state.pos +. 1, step: Step::SetColor }
+            State { pos: state.pos +. 1, step: Step::SetColor { pixels_left: initial_pixels_left } }
         } else {
             State { pos: state.pos, step: Step::Wait { cycles_left: cycles_left -. 1 } }
         },
         _ => state,
     };
     let request = match state.step {
-        Step::SetColor => Some(Request::SendPixel {
-            pixel: wheel(state.pos)
+        Step::SetColor { pixels_left } => Some(Request::SendPixel {
+            pixel: wheel(state.pos +. trunc(pixels_left * pixel_pos_shift)).right_shift(right_shift_value)
         }),
         Step::Reset => Some(Request::SendReset),
         _ => None
