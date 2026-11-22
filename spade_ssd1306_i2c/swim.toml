@@ -1,0 +1,25 @@
+name = "spade_ssd1306_tangnano20k"
+
+[synthesis]
+command = "synth_gowin"
+top = "top"
+
+[pnr]
+architecture = "gowin"
+device."GW2AR-LV18QN88C8/I7" = {family = "GW2A-18C"}
+pin_file = "tangnano20k.cst"
+
+[packing]
+tool = "gowin_pack"
+device = "GW2A-18C"
+
+[upload]
+tool = "openFPGALoader"
+board = "tangnano20k"
+
+[libraries]
+ready_valid.git = "https://codeberg.org/spade-lang/ready_valid.git"
+ws2812.git = "https://github.com/ChocolateLoverRaj/spade_ws2812.git"
+
+[simulation]
+testbench_dir = "test"
