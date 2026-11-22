@@ -1,7 +1,5 @@
-mod ws2812;
-
 use ready_valid::Rv;
-use ws2812::{Ws2812Config, Pixel, Request};
+use ws2812::{Config, Pixel, Request, ws2812_output};
 
 enum Step {
     SetColor { pixels_left: uint<6> },
@@ -54,7 +52,7 @@ entity top(
 ) {
     let (ready, ready_inv) = port();
 
-    let ws2812_config = Ws2812Config::<11> {
+    let ws2812_config = Config::<11> {
         t_350_ns: 9,
         t_700_ns: 19,
         t_800_ns: 22,
@@ -66,7 +64,7 @@ entity top(
     let initial_pixels_left = 63;
     let pixel_pos_shift = 1_u8;
     // Dim the pixel because the LEDs get super bright
-    let right_shift_value = 0;
+    let right_shift_value = 4;
     // Approximately 10s per cycle
     let wait_time = 1_057_420;
     let initial_state = State {
@@ -95,7 +93,7 @@ entity top(
         _ => None
     };
 
-    set ws2812_pin = inst ws2812::ws2812(clk, rst, Rv(request, ready_inv), ws2812_config);
+    set ws2812_pin = inst ws2812_output(clk, rst, Rv(request, ready_inv), ws2812_config);
 
     let n: uint<6> = trunc(state.pos);
     set led = (~n).as_bits();
