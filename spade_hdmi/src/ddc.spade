@@ -1,0 +1,107 @@
+use ready_valid::Rv;
+
+pub struct DdcConfig<#uint N> {
+    clk_period: uint<N>,
+}
+
+enum DdcState<#uint N> {
+    Idle,
+    SendStart { clk_count: uint<N> },
+    SendAddr { clk_count: uint<N>, bit: uint<3> },
+    ReceiveAckOrNack { clk_count: uint<N> },
+}
+
+pub enum Command {
+    WriteAddress {
+        addr: uint<7>,
+    },
+}
+
+pub enum Response {
+    Ack,
+    Nack,
+}
+
+pub entity ddc<#uint N>(
+    clk: clock,
+    rst: bool,
+    scl_low_inv: inv bool,
+    sda_low: bool,
+    sda_low_inv: inv bool,
+    config: DdcConfig<N>,
+    command: Rv<Command>,
+) -> Option<Response> {
+    let Rv { _data: command, ready } = command;
+
+    reg(clk) state reset(rst: DdcState::Idle) = match state {
+        DdcState::Idle => match command {
+            Some(Command::WriteAddress { addr }) => {
+                DdcState::SendStart { clk_count: 0 }
+            },
+            _ => DdcState::Idle,
+        },
+        DdcState::SendStart { clk_count } => if clk_count == config.clk_period / 2 -. 1 {
+            DdcState::SendAddr { clk_count: 0, bit: 7 }
+        } else {
+            DdcState::SendStart { clk_count: clk_count +. 1 }
+        },
+        DdcState::SendAddr { clk_count, bit } => if clk_count == config.clk_period -. 1 {
+            if bit == 0 {
+                DdcState::ReceiveAckOrNack { clk_count: 0 }
+            } else {
+                DdcState::SendAddr { clk_count: 0, bit: bit -. 1 }
+            }
+        } else {
+            DdcState::SendAddr { clk_count: clk_count +. 1, bit: bit }
+        },
+        DdcState::ReceiveAckOrNack { clk_count } => if clk_count == config.clk_period -. 1 {
+            DdcState::Idle
+        } else {
+            DdcState::ReceiveAckOrNack { clk_count: clk_count +. 1 }
+        },
+    };
+
+    set ready = match state {
+        DdcState::Idle => true,
+        _ => false,
+    };
+
+    set scl_low_inv = match state {
+        DdcState::Idle => false,
+        DdcState::SendStart { clk_count } => false,
+        DdcState::SendAddr { clk_count, bit } => clk_count < config.clk_period / 2,
+        DdcState::ReceiveAckOrNack { clk_count } => clk_count < config.clk_period / 2,
+    };
+    set sda_low_inv = match state {
+        DdcState::Idle => false,
+        DdcState::SendStart { clk_count } => true,
+        DdcState::SendAddr { clk_count, bit } => if bit == 0 {
+            // 0 means write
+            true
+        } else {
+            match command {
+                Some(Command::WriteAddress { addr }) => {
+                    !addr.as_bits()[bit -. 1]
+                },
+                _ => {
+                    // panic!
+                    false
+                }
+            }
+        },
+        DdcState::ReceiveAckOrNack { clk_count } => false,
+    };
+
+    match state {
+        DdcState::ReceiveAckOrNack { clk_count } => if clk_count == config.clk_period / 2 {
+            Some(if sda_low {
+                Response::Ack
+            } else {
+                Response::Nack
+            })
+        } else {
+            None
+        },
+        _ => None,
+    }
+}

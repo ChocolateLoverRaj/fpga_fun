@@ -1,5 +1,3 @@
-mod i2c;
-
 use i2c::{i2c_controller, Output, Config, Request, Response};
 use ready_valid::Rv;
 
@@ -163,7 +161,7 @@ entity th(
         // From i2c spec: 1.3 us
         scl_low_cycles: 13,
         // From i2c spec: 0.6 us
-        scl_high_cycles: 7,
+        scl_high_cycles: 6,
         // From SSD1309: 2.5 us (400 kHz speed)
         clock_cycle_cycles: 25,
         // From SSD1309: 0.6 us

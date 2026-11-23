@@ -1,0 +1,32 @@
+mod ddc;
+
+use protocols::{uart::UartConfig, uart};
+use ready_valid::Rv;
+use ddc::{DdcConfig, Command, Response};
+
+enum State {
+    Initial,
+    Running,
+    Done,
+}
+
+#[no_mangle(all)]
+entity top(
+    clk: clock,
+    rst: bool,
+    led: inv [bool; 6],
+    hdmi_hpd: bool,
+    hdmi_dcd_clk: inout<bool>,
+    hdmi_dcd_dat: inout<bool>,
+    // uart_tx: inv bool,
+    // uart_rx: bool,
+) {
+    let hdmi_connected = hdmi_hpd;
+    let (clk, clk_inv) = hdmi_dcd_clk.read_write();
+    let (dat, dat_inv) = hdmi_dcd_dat.read_write();
+
+    set clk_inv = None;
+    set dat_inv = None;
+
+    set led = [!(clk == Some(true)), !(dat == Some(true)), !clk.is_some(), !dat.is_some(), !hdmi_connected, true];
+}

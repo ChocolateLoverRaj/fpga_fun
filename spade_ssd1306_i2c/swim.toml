@@ -18,6 +18,7 @@ tool = "openFPGALoader"
 board = "tangnano20k"
 
 [libraries]
+i2c.path = "../../spade_i2c"
 ready_valid.git = "https://codeberg.org/spade-lang/ready_valid.git"
 ws2812.git = "https://github.com/ChocolateLoverRaj/spade_ws2812.git"
 
