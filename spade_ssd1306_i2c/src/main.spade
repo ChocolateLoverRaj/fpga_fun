@@ -1,15 +1,18 @@
-use i2c::{i2c_controller, Output, Config, Request, Response};
+use i2c::{i2c_controller, Config, Req, Output, Status, AddrRw, Addr, Rw};
 use ready_valid::Rv;
 
 
 enum State {
     Wait { clocks_left: uint<15> },
-    StartWrite,
-    StartAck,
-    WriteByte { i: uint<5> },
-    ByteAck { i: uint<5> },
-    Error,
-    Done,
+    Start { ack: Option<bool> },
+    WriteByte { i: uint<5>, ack: Option<bool> },
+    Stop { error: bool },
+    Done { error: bool },
+}
+
+struct S {
+    req: Option<Req>,
+    next_state: State,
 }
 
 #[no_mangle(all)]
@@ -25,7 +28,7 @@ entity top(
     let (scl, scl_inv) = sd1309_scl.read_write();
     let (sda, sda_inv) = sd1309_sda.read_write();
 
-    let config = Config::<7> {
+    let config = Config::<9> {
         // From SSD1309: 0.6 us
         start_hold_cycles: 17,
         // From SSD1309: 0.3 us
@@ -37,224 +40,130 @@ entity top(
         // From i2c spec: 0.6 us
         scl_high_cycles: 17,
         // From SSD1309: 2.5 us (400 kHz speed)
-        clock_cycle_cycles: 68,
+        scl_cycles: 68,
         // From SSD1309: 0.6 us
         stop_setup_cycles: 17,
         // From SSD1309: 1.3 us
         after_stop_cycles: 36,
+        // From i2c spec and SSD1306 spec: 0.6 us
+        restart_setup_cycles: 17,
     };
 
     let (ready, ready_inv) = port();
 
-    decl output;
-    let bytes = [
-    0x00,                               // Control byte: command stream
-    0xAE,                               // Display OFF
-    0xD5, 0x80,                         // Clock divide / oscillator frequency
-    0xA8, 0x3F,                         // Multiplex ratio (64 rows for 128x64)
-    0xD3, 0x00,                         // Display offset (0)
-    0x40,                               // Display start line (0)
-    0x8D, 0x14,                         // Enable internal charge pump (crucial for SSD1306!)
-    0x20, 0x00,                         // Horizontal addressing mode
-    0xA1,                               // Segment re-map (col 127 -> SEG0)
-    0xC8,                               // COM scan direction (remapped)
-    0xDA, 0x12,                         // COM pins hardware config (0x12 for 128x64; 0x02 for 128x32)
-    0x81, 0xCF,                         // Contrast control
-    0xD9, 0xF1,                         // Pre-charge period (recommended for internal charge pump)
-    0xDB, 0x40,                         // VCOMH deselect level
-    0x2E,                               // Deactivate scroll
-    0xA5,                               // Resume to GDDRAM (use 0xA5 for all-pixels-ON test)
-    0xA6,                               // Normal (non-inverted) display
-    0xAF                                // Display ON
-    ];
-    reg(clk) state initial(State::Wait { clocks_left: 27_000 }) reset(rst: State::Wait { clocks_left: 27_000 }) = match (state, ready) {
-        (State::Wait { clocks_left: 0 }, true) => {
-            State::StartWrite
-        },
-        (State::Wait { clocks_left: 0 }, false) => state,
-        (State::Wait { clocks_left }, _) => State::Wait {
-            clocks_left: clocks_left -. 1
-        },
-        (State::StartWrite, true) => State::StartAck,
-        (State::StartAck, _) => match output.response {
-            Some(Response::Ack) => State::WriteByte { i: 0 },
-            Some(Response::Nack) => State::Error,
-           _ => state
-        },
-        (State::WriteByte { i }, true) => State::ByteAck { i },
-        (State::ByteAck { i }, _) => match output.response {
-            Some(Response::Ack) => if i +. 1 < bytes.len() {
-                State::WriteByte { i: i +. 1 }
-            } else {
-                State::Done
-            },
-            Some(Response::Nack) => State::Error,
-           _ => state
-        },
-        _ => state,
-    };
-
-    let request = match state {
-        State::StartWrite => Some(Request::StartWrite { addr: 0x3C }),
-        State::WriteByte { i } => Some(Request::WriteByte { byte: bytes[i] }),
-        _ => None,
-    };
-
-    let scl_low = scl == Some(false);
-    let sda_low = sda == Some(false);
-    let output = inst i2c_controller(
-        clk,
-        rst,
-        scl_low,
-        sda_low,
-        Rv(request, ready_inv),
-        config,
-    );
-
-    reg(clk) received_ack initial(false) reset(rst: false) = received_ack || match output.response {
-        Some(Response::Ack) => true,
-        _ => false,
-    };
-    reg(clk) received_nack initial(false) reset(rst: false) = received_nack || match output.response {
-        Some(Response::Nack) => true,
-        _ => false,
-    };
-
-    set scl_inv = if output.scl_low { Some(false) } else { None };
-    set sda_inv = if output.sda_low { Some(false) } else { None };
-
-    let is_done = match state {
-        State::Done => true,
-        _ => false,
-    };
-    let is_error = match state {
-        State::Error => true,
-        _ => false,
-    };
-    set led = [!is_done, !is_error, !output.sda_low, !output.scl_low, !sda_low, !scl_low];
-}
-
-#[no_mangle(all)]
-entity th(
-    // 10 MHz
-    clk: clock,
-    rst: bool,
-    scl: bool,
-    scl_inv: inv bool,
-    sda: bool,
-    sda_inv: inv bool,
-    // Observability
-    response: inv Option<Response>,
-    ack: inv bool,
-    nack: inv bool,
-    ready_2: inv bool,
-    done: inv bool,
-    error: inv bool,
-) {
-    let config = Config::<5> {
-        // From SSD1309: 0.6 us
-        start_hold_cycles: 6,
-        // From SSD1309: 0.3 us
-        data_hold_cycles: 3,
-        // From SSD1309: 0.1 us
-        data_setup_cycles: 1,
-        // From i2c spec: 1.3 us
-        scl_low_cycles: 13,
-        // From i2c spec: 0.6 us
-        scl_high_cycles: 6,
-        // From SSD1309: 2.5 us (400 kHz speed)
-        clock_cycle_cycles: 25,
-        // From SSD1309: 0.6 us
-        stop_setup_cycles: 6,
-        // From SSD1309: 1.3 us
-        after_stop_cycles: 13,
-    };
-
-    let (ready, ready_inv) = port();
-    set ready_2 = ready;
-
-    decl output;
     let bytes = [
         0x00,                               // Control byte: command stream
-      0xAE,                               // Display OFF
-      0xD5, 0x80,                         // Clock divide / oscillator frequency
-      0xA8, 0x3F,                         // Multiplex ratio (64 rows for 128x64)
-      0xD3, 0x00,                         // Display offset (0)
-      0x40,                               // Display start line (0)
-      0x8D, 0x14,                         // Enable internal charge pump (crucial for SSD1306!)
-      0x20, 0x00,                         // Horizontal addressing mode
-      0xA1,                               // Segment re-map (col 127 -> SEG0)
-      0xC8,                               // COM scan direction (remapped)
-      0xDA, 0x12,                         // COM pins hardware config (0x12 for 128x64; 0x02 for 128x32)
-      0x81, 0xCF,                         // Contrast control
-      0xD9, 0xF1,                         // Pre-charge period (recommended for internal charge pump)
-      0xDB, 0x40,                         // VCOMH deselect level
-      0x2E,                               // Deactivate scroll
-      0xA5,                               // Resume to GDDRAM (use 0xA5 for all-pixels-ON test)
-      0xA6,                               // Normal (non-inverted) display
-      0xAF                                // Display ON
+        0xAE,                               // Display OFF
+        0xD5, 0x80,                         // Clock divide / oscillator frequency
+        0xA8, 0x3F,                         // Multiplex ratio (64 rows for 128x64)
+        0xD3, 0x00,                         // Display offset (0)
+        0x40,                               // Display start line (0)
+        0x8D, 0x14,                         // Enable internal charge pump (crucial for SSD1306!)
+        0x20, 0x00,                         // Horizontal addressing mode
+        0xA1,                               // Segment re-map (col 127 -> SEG0)
+        0xC8,                               // COM scan direction (remapped)
+        0xDA, 0x12,                         // COM pins hardware config (0x12 for 128x64; 0x02 for 128x32)
+        0x81, 0xCF,                         // Contrast control
+        0xD9, 0xF1,                         // Pre-charge period (recommended for internal charge pump)
+        0xDB, 0x40,                         // VCOMH deselect level
+        0x2E,                               // Deactivate scroll
+        0xA5,                               // Resume to GDDRAM (use 0xA5 for all-pixels-ON test)
+        0xA6,                               // Normal (non-inverted) display
+        0xAF                                // Display ON
     ];
-    reg(clk) state initial(State::Wait { clocks_left: 0 }) reset(rst: State::Wait { clocks_left: 0 }) = match (state, ready) {
-        (State::Wait { clocks_left: 0 }, true) => {
-            State::StartWrite
+    decl output;
+    decl state;
+    let s = match state {
+        State::Wait(clocks_left) => {
+            S {
+                req: None,
+                next_state: if clocks_left > 0 {
+                    State::Wait(clocks_left -. 1)
+                } else {
+                    State::Start(None)
+                },
+            }
         },
-        (State::Wait { clocks_left: 0 }, false) => state,
-        (State::Wait { clocks_left }, _) => State::Wait {
-            clocks_left: clocks_left -. 1
+        State::Start(ack) => {
+            let ack = match (ack, output.status) {
+                (Some(ack), _) => Some(ack),
+                (_, Some(Status::Ack)) => Some(true),
+                (_, Some(Status::Nack)) => Some(false),
+                _ => None,
+            };
+            S {
+                req: Some(Req::Start(AddrRw(Addr::_7Bit(0x3C), Rw::Write))),
+                next_state: match (ack, ready) {
+                    (Some(true), true) => State::WriteByte(0, None),
+                    (Some(false), true) => State::Stop(true),
+                    _ => State::Start(ack),
+                },
+            }
         },
-        (State::StartWrite, true) => State::StartAck,
-        (State::StartAck, _) => match output.response {
-            Some(Response::Ack) => State::WriteByte { i: 0 },
-            Some(Response::Nack) => State::Error,
-            _ => state
+        State::WriteByte(i, ack) => {
+            let ack = match (ack, output.status) {
+                (Some(ack), _) => Some(ack),
+                (_, Some(Status::Ack)) => Some(true),
+                (_, Some(Status::Nack)) => Some(false),
+                _ => None,
+            };
+            S {
+                req: Some(Req::WriteByte(bytes[i])),
+                next_state: match (ack, ready, i == bytes.len()) {
+                    (Some(true), true, false) => State::WriteByte(i +. 1, None),
+                    (Some(true), true, true) => State::Stop(false),
+                    (Some(false), true, _) => State::Stop(true),
+                    _ => State::WriteByte(i, ack),
+                },
+            }
         },
-        (State::WriteByte { i }, true) => State::ByteAck { i },
-        (State::ByteAck { i }, _) => match output.response {
-            Some(Response::Ack) => if i +. 1 < bytes.len() {
-                State::WriteByte { i: i +. 1 }
-            } else {
-                State::Done
-            },
-            Some(Response::Nack) => State::Error,
-            _ => state
+        State::Stop(error) => {
+            S {
+                req: Some(Req::Stop),
+                next_state: if ready {
+                    State::Done(error)
+                } else {
+                    State::Stop(error)
+                }
+            }
         },
-        _ => state,
+        State::Done(error) => S {
+            req: None,
+            next_state: State::Done(error),
+        },
     };
+    reg(clk) state initial(State::Wait { clocks_left: 27_000 }) reset(rst: State::Wait { clocks_left: 27_000 }) = s.next_state;
 
-    let request = match state {
-        State::StartWrite => Some(Request::StartWrite { addr: 0x3C }),
-        State::WriteByte { i } => Some(Request::WriteByte { byte: bytes[i] }),
-        _ => None,
-    };
-    let scl_low = scl == false;
-    let sda_low = sda == false;
+    let sda = sda == Some(true);
+    let scl = scl == Some(true);
     let output = inst i2c_controller(
         clk,
         rst,
-        scl_low,
-        sda_low,
-        Rv(request, ready_inv),
+        sda,
+        scl,
+        Rv(s.req, ready_inv),
         config,
     );
 
-    set scl_inv = if output.scl_low { false } else { true };
-    set sda_inv = if output.sda_low { false } else { true };
+    reg(clk) received_ack initial(false) reset(rst: false) = received_ack || match output.status {
+        Some(Status::Ack) => true,
+        _ => false,
+    };
+    reg(clk) received_nack initial(false) reset(rst: false) = received_nack || match output.status {
+        Some(Status::Nack) => true,
+        _ => false,
+    };
 
-    set response = output.response;
-    set ack = match output.response {
-        Some(Response::Ack) => true,
+    set scl_inv = if output.scl { None } else { Some(false) };
+    set sda_inv = if output.sda { None } else { Some(false) };
+
+    let is_done_ok = match state {
+        State::Done(false) => true,
         _ => false,
     };
-    set nack = match output.response {
-        Some(Response::Nack) => true,
+    let is_done_err = match state {
+        State::Done(true) => true,
         _ => false,
     };
-    set done = match state {
-        State::Done => true,
-        _ => false,
-    };
-    set error = match state {
-        State::Error => true,
-        _ => false,
-    };
+    set led = [!is_done_ok, !is_done_err, !output.sda, !output.scl, !sda, !scl];
 }
