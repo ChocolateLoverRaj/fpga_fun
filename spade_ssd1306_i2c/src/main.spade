@@ -3,7 +3,6 @@ use ready_valid::Rv;
 
 
 enum State {
-    Wait { clocks_left: uint<15> },
     Start { ack: Option<bool> },
     WriteByte { i: uint<5>, ack: Option<bool> },
     Stop { error: bool },
@@ -15,42 +14,21 @@ struct S {
     next_state: State,
 }
 
-#[no_mangle(all)]
-entity top(
+struct O {
+    sda: bool,
+    scl: bool,
+    leds: [bool; 6],
+}
+
+entity ssd1306<#uint N>(
     // 27 MHz
     clk: clock,
     rst: bool,
-    btn: bool,
-    led: inv [bool; 6],
-    sd1309_scl: inout<bool>,
-    sd1309_sda: inout<bool>,
-) {
-    let (scl, scl_inv) = sd1309_scl.read_write();
-    let (sda, sda_inv) = sd1309_sda.read_write();
-
-    let config = Config::<9> {
-        // From SSD1309: 0.6 us
-        start_hold_cycles: 17,
-        // From SSD1309: 0.3 us
-        data_hold_cycles: 9,
-        // From SSD1309: 0.1 us
-        data_setup_cycles: 3,
-        // From i2c spec: 1.3 us
-        scl_low_cycles: 36,
-        // From i2c spec: 0.6 us
-        scl_high_cycles: 17,
-        // From SSD1309: 2.5 us (400 kHz speed)
-        scl_cycles: 68,
-        // From SSD1309: 0.6 us
-        stop_setup_cycles: 17,
-        // From SSD1309: 1.3 us
-        after_stop_cycles: 36,
-        // From i2c spec and SSD1306 spec: 0.6 us
-        restart_setup_cycles: 17,
-    };
-
+    sda: bool,
+    scl: bool,
+    config: Config<N>,
+) -> O {
     let (ready, ready_inv) = port();
-
     let bytes = [
         0x00,                               // Control byte: command stream
         0xAE,                               // Display OFF
@@ -58,7 +36,7 @@ entity top(
         0xA8, 0x3F,                         // Multiplex ratio (64 rows for 128x64)
         0xD3, 0x00,                         // Display offset (0)
         0x40,                               // Display start line (0)
-        0x8D, 0x14,                         // Enable internal charge pump (crucial for SSD1306!)
+        0x8D, 0x14,                         // Enable internal charge pump (crucial for ssd1306!)
         0x20, 0x00,                         // Horizontal addressing mode
         0xA1,                               // Segment re-map (col 127 -> SEG0)
         0xC8,                               // COM scan direction (remapped)
@@ -74,16 +52,6 @@ entity top(
     decl output;
     decl state;
     let s = match state {
-        State::Wait(clocks_left) => {
-            S {
-                req: None,
-                next_state: if clocks_left > 0 {
-                    State::Wait(clocks_left -. 1)
-                } else {
-                    State::Start(None)
-                },
-            }
-        },
         State::Start(ack) => {
             let ack = match (ack, output.status) {
                 (Some(ack), _) => Some(ack),
@@ -132,10 +100,8 @@ entity top(
             next_state: State::Done(error),
         },
     };
-    reg(clk) state initial(State::Wait { clocks_left: 27_000 }) reset(rst: State::Wait { clocks_left: 27_000 }) = s.next_state;
+    reg(clk) state initial(State::Start(None)) reset(rst: State::Start(None)) = s.next_state;
 
-    let sda = sda == Some(true);
-    let scl = scl == Some(true);
     let output = inst i2c_controller(
         clk,
         rst,
@@ -154,9 +120,6 @@ entity top(
         _ => false,
     };
 
-    set scl_inv = if output.scl { None } else { Some(false) };
-    set sda_inv = if output.sda { None } else { Some(false) };
-
     let is_done_ok = match state {
         State::Done(false) => true,
         _ => false,
@@ -165,5 +128,59 @@ entity top(
         State::Done(true) => true,
         _ => false,
     };
-    set led = [!is_done_ok, !is_done_err, !output.sda, !output.scl, !sda, !scl];
+    O {
+        sda: output.sda,
+        scl: output.scl,
+        leds: [is_done_ok, is_done_err, output.sda, output.scl, sda, scl],
+    }
+}
+
+#[no_mangle(all)]
+entity top(
+    // 27 MHz
+    clk: clock,
+    rst: bool,
+    leds: inv [bool; 6],
+    ssd1306_scl: inout<bool>,
+    ssd1306_sda: inout<bool>,
+) {
+    let (scl, scl_inv) = ssd1306_scl.read_write();
+    let (sda, sda_inv) = ssd1306_sda.read_write();
+    let config = Config::<7> {
+        // From SSD1309: 0.6 us
+        start_hold_cycles: 17,
+        // From SSD1309: 0.3 us
+        data_hold_cycles: 9,
+        // From SSD1309: 0.1 us
+        data_setup_cycles: 3,
+        // From i2c spec: 1.3 us
+        scl_low_cycles: 36,
+        // From i2c spec: 0.6 us
+        scl_high_cycles: 17,
+        // From SSD1309: 2.5 us (400 kHz speed)
+        scl_cycles: 68,
+        // From SSD1309: 0.6 us
+        stop_setup_cycles: 17,
+        // From SSD1309: 1.3 us
+        after_stop_cycles: 36,
+        // From i2c spec and ssd1306 spec: 0.6 us
+        restart_setup_cycles: 17,
+    };
+    let sda = sda == Some(true);
+    let scl = scl == Some(true);
+    let output = inst ssd1306(clk, rst, sda, scl, config);
+    set scl_inv = if output.scl { None } else { Some(false) };
+    set sda_inv = if output.sda { None } else { Some(false) };
+    set leds = output.leds.map(fn |x| !x);
+}
+
+entity ssd1306_th(
+    // 27 MHz
+    clk: clock,
+    rst: bool,
+    sda: bool,
+    scl: bool,
+    config: Config<5>,
+) -> O {
+    inst ssd1306(clk, rst, sda, scl, config)
 }

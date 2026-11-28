@@ -1,26 +1,17 @@
 IO_LOC "clk" 4;
 CLOCK_LOC "clk" BUFG;
 
-IO_LOC "led[0]" 15;
-IO_LOC "led[1]" 16;
-IO_LOC "led[2]" 17;
-IO_LOC "led[3]" 18;
-IO_LOC "led[4]" 19;
-IO_LOC "led[5]" 20;
-
-IO_LOC "btn" 87;
-IO_PORT "btn" IO_TYPE=LVCMOS33;
+IO_LOC "leds[0]" 15;
+IO_LOC "leds[1]" 16;
+IO_LOC "leds[2]" 17;
+IO_LOC "leds[3]" 18;
+IO_LOC "leds[4]" 19;
+IO_LOC "leds[5]" 20;
 
 IO_LOC "rst" 88;
 IO_PORT "rst" IO_TYPE=LVCMOS33;
 
-// USB-C UART
-IO_LOC "TXD" 69;
-IO_PORT "TXD" PULL_MODE=NONE;
-IO_LOC "RXD" 70;
-IO_PORT "RXD" PULL_MODE=NONE;
-
-IO_LOC "sd1309_scl" 72;
-IO_PORT "sd1309_scl" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-IO_LOC "sd1309_sda" 71;
-IO_PORT "sd1309_sda" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "ssd1306_scl" 72;
+IO_PORT "ssd1306_scl" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "ssd1306_sda" 71;
+IO_PORT "ssd1306_sda" IO_TYPE=LVCMOS33 PULL_MODE=UP;
